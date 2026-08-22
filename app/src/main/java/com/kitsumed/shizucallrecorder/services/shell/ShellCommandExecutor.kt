@@ -55,6 +55,21 @@ class ShellCommandExecutor {
     }
 
     /**
+     * Grants a runtime permission (development protection level) to a package for a specific user profile.
+     *
+     * The shell user is explicitly allowed to grant permissions with the "development"
+     * protection level flag. See PackageManagerService handling of SHELL_PACKAGE_NAME.
+     *
+     * @param packageName The package name of the app to grant the permission to.
+     * @param permissionName The permission name (e.g. "android.permission.SET_VOLUME_KEY_LONG_PRESS_LISTENER").
+     * @param userProfileId The user ID for which to grant the permission.
+     * @return True if the command was successful, false otherwise.
+     */
+    fun grantRuntimePermission(packageName: String, permissionName: String, userProfileId: Int): Boolean {
+        return execute("pm", "grant", "--user", userProfileId.toString(), packageName, permissionName)
+    }
+
+    /**
      * Executes a shell command and returns true if the command was successful (exit code 0) and there was no error output.
      * Logs the command, exit code, output, and error output for debugging purposes.
      *

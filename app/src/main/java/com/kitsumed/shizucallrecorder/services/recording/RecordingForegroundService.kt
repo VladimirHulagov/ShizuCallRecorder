@@ -75,6 +75,9 @@ class RecordingForegroundService : Service() {
 
     private lateinit var overlayController: RecordingOverlayController
 
+    /** Manages the volume key long-press listener while this service is alive (i.e. during a call). */
+    private var volumeKeyTrigger: VolumeKeyTriggerController? = null
+
     /** IPC stub to the privileged ShellService running in the shell process. */
     private var shellService: IShellService? = null
 
@@ -120,6 +123,8 @@ class RecordingForegroundService : Service() {
                 stopRecordingSessionAndService()
             }
         }
+
+        maybeRegisterVolumeKeyTrigger()
 
         AppLogger.d( "RecordingForegroundService initialized")
     }
@@ -272,6 +277,8 @@ class RecordingForegroundService : Service() {
         // Always clean up, even if the OS kills the service mid-recording.
         // This is the guaranteed last callback before the service process is cleaned up.
         AppLogger.v( "RecordingForegroundService is destroying... Ensuring cleanup...")
+        volumeKeyTrigger?.unregister()
+        volumeKeyTrigger = null
         serviceScope.cancel()
         overlayController.hideOverlay()
         stopRecordingSessionAndService()
@@ -283,6 +290,47 @@ class RecordingForegroundService : Service() {
     }
 
     // ── Service internal logic ───────────────────────────────────────
+
+    /**
+     * Registers the volume key long-press listener if the user enabled the trigger in settings.
+     * The listener lives exactly as long as this service: while a call is ongoing.
+     * Outside of calls the service is dead, so volume keys behave normally.
+     */
+    private fun maybeRegisterVolumeKeyTrigger() {
+        if (!appPreferences.isVolumeKeyTriggerEnabled()) return
+
+        val trigger = VolumeKeyTriggerController(this) {
+            // Toggle: standby -> start recording; recording -> stop and return to standby
+            // (service stays alive, so it can be toggled repeatedly within the same call).
+            val state = _serviceState.value
+            when {
+                state.isRecordingActive -> {
+                    AppLogger.i("VolumeKeyTrigger: stopping recording")
+                    stopRecordingSessionAndService(keepAliveInStandby = true)
+                }
+                state.isStarting -> {
+                    // A start is already in flight; ignore to avoid racing the startup coroutine.
+                    AppLogger.d("VolumeKeyTrigger: start in progress, ignoring trigger")
+                }
+                else -> {
+                    AppLogger.i("VolumeKeyTrigger: starting recording")
+                    val startIntent = Intent(this).setAction(ACTION_MANUAL_START)
+                    state.metadata?.let { startIntent.putExtra(EnrichedCallData.EXTRA_METADATA, it) }
+                    onStartCommand(startIntent, 0, -1)
+                }
+            }
+        }
+        if (trigger.register()) {
+            volumeKeyTrigger = trigger
+        } else {
+            notificationHelper.showErrorNotification(
+                getString(R.string.recording_volume_trigger_failed)
+            )
+            notificationHelper.showToast(
+                getString(R.string.recording_volume_trigger_failed)
+            )
+        }
+    }
 
     /**
      * Orchestrates the recording state at the Service level.
@@ -320,8 +368,13 @@ class RecordingForegroundService : Service() {
      * Always trigger [AudioRecordingEngine.release] so that if we are currently recording,
      * we safely shuts down the pipeline and saves the file, clears the current session,
      * removes the foreground notification, and stops the service.
+     *
+     * @param keepAliveInStandby When true (used by the volume key trigger), the service is NOT
+     * stopped after the session ends: it returns to Standby keeping the call metadata, so the
+     * recording can be restarted later in the same call. The volume key listener also stays
+     * registered. Normal call-end flow uses the default (false) and kills the service.
      */
-    private fun stopRecordingSessionAndService() {
+    private fun stopRecordingSessionAndService(keepAliveInStandby: Boolean = false) {
         val activeSession = (_serviceState.value as? RecordingServiceState.Active)?.engine
         if (activeSession == null) {
             AppLogger.d( "No active session, exiting standby state, removing foreground notification and stopping service.")
@@ -348,7 +401,13 @@ class RecordingForegroundService : Service() {
             }
         }
 
-        _serviceState.update { RecordingServiceState.Standby(null) }
+        _serviceState.update { RecordingServiceState.Standby(if (keepAliveInStandby) activeSession.initializationMetadata else null) }
+        if (keepAliveInStandby) {
+            // Stay alive in standby so the user can restart recording later in this call.
+            AppLogger.i( "Recording stopped; staying in standby (volume key trigger).")
+            updateNotification()
+            return
+        }
         AppLogger.i( "The recording session has been stopped and resources have been released. Stopping foreground service. Goodbye >3")
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf() // Stop the service since the session is over

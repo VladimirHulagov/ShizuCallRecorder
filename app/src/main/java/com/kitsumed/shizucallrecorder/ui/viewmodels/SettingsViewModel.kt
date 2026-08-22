@@ -16,15 +16,19 @@ import androidx.lifecycle.viewModelScope
 import com.kitsumed.shizucallrecorder.BuildConfig
 import com.kitsumed.shizucallrecorder.data.AppPreferences
 import com.kitsumed.shizucallrecorder.integrations.scrcpy.ScrcpyAudioCodec
+import com.kitsumed.shizucallrecorder.integrations.shizuku.ShizukuConnectionManager
 import com.kitsumed.shizucallrecorder.services.callDetection.CallDetectionMode
 import com.kitsumed.shizucallrecorder.services.callDetection.CallDetectionOrchestrator
 import com.kitsumed.shizucallrecorder.services.callDetection.phoneState.PhoneStateSessionManager
+import com.kitsumed.shizucallrecorder.services.recording.VolumeKeyTriggerController
 import com.kitsumed.shizucallrecorder.utils.AppLogger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.coroutines.cancellation.CancellationException
 
 // -------- Screen state & action types owned by this ViewModel
 
@@ -50,6 +54,7 @@ enum class DebugAction {
 interface SettingsActions {
     fun setAutoRecordIncoming(enabled: Boolean)
     fun setAutoRecordOutgoing(enabled: Boolean)
+    fun setVolumeKeyTriggerEnabled(enabled: Boolean)
     fun setVibrationEnabled(enabled: Boolean)
     fun setIgnoreAnonymousIncoming(enabled: Boolean)
     fun setIgnoreCrossCountryIncoming(enabled: Boolean)
@@ -165,6 +170,44 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     override fun setAutoRecordOutgoing(enabled: Boolean) {
         preferences.setAutoRecordOutgoingEnabled(enabled)
         refresh()
+    }
+
+    /**
+     * Enables or disables the volume key long-press manual recording trigger.
+     *
+     * When enabling for the first time, grants the development-level permission
+     * android.permission.SET_VOLUME_KEY_LONG_PRESS_LISTENER to this package via
+     * the privileged Shizuku shell process ("pm grant"). The grant persists across
+     * reboots, so this is only needed once per install.
+     */
+    override fun setVolumeKeyTriggerEnabled(enabled: Boolean) {
+        preferences.setVolumeKeyTriggerEnabled(enabled)
+        refresh()
+        if (enabled) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val context = getApplication<Application>()
+                // Already granted? Nothing to do.
+                if (VolumeKeyTriggerController(context) {}.hasPermission()) return@launch
+                val manager = ShizukuConnectionManager(context)
+                try {
+                    ShizukuConnectionManager.waitForServer(timeoutMillis = 5000)
+                    val shell = manager.getShellService()
+                    shell.grantRuntimePermission(
+                        context.packageName,
+                        VolumeKeyTriggerController.PERMISSION,
+                        android.os.Process.myUserHandle().hashCode()
+                    )
+                    AppLogger.i("Volume key trigger: permission granted via Shizuku pm grant")
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    // Not fatal: the user can also grant manually via ADB:
+                    //   adb shell pm grant com.kitsumed.shizucallrecorder android.permission.SET_VOLUME_KEY_LONG_PRESS_LISTENER
+                    AppLogger.w("Volume key trigger: could not grant permission yet (${e.message}). Grant will be retried when re-enabling the toggle.")
+                } finally {
+                    manager.unbind()
+                }
+            }
+        }
     }
 
     /** Enables or disables vibration feedback.

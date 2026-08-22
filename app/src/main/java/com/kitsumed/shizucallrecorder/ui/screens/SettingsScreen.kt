@@ -553,6 +553,7 @@ private fun RecordingSection(
     val isVibrationEnabled = remember(updateTrigger) { preferences.isVibrationEnabled() }
     val autoRecordIncoming = remember(updateTrigger) { preferences.isAutoRecordIncomingEnabled() }
     val autoRecordOutgoing = remember(updateTrigger) { preferences.isAutoRecordOutgoingEnabled() }
+    val volumeKeyTriggerEnabled = remember(updateTrigger) { preferences.isVolumeKeyTriggerEnabled() }
     val ignoreAnonymousIncoming = remember(updateTrigger) { preferences.isIgnoreAnonymousIncomingEnabled() }
     val ignoreCrossCountryIncoming = remember(updateTrigger) { preferences.isIgnoreCrossCountryIncomingEnabled() }
     val ignoreContactsModeIncoming = remember(updateTrigger) { preferences.getIgnoreContactsModeIncoming() }
@@ -754,6 +755,16 @@ private fun RecordingSection(
                 )
             }
         }
+
+        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), thickness = 0.5.dp)
+
+        // Manual trigger: start/stop recording by long-pressing a volume key during a call.
+        ToggleListItem(
+            label           = stringResource(R.string.settings_volume_key_trigger),
+            description     = stringResource(R.string.settings_volume_key_trigger_desc),
+            checked         = volumeKeyTriggerEnabled,
+            onCheckedChange = { actions.setVolumeKeyTriggerEnabled(it) }
+        )
     }
 
     if (showFileNameFormatDialog) {
@@ -1215,6 +1226,7 @@ private fun SettingsScreenPreview() {
         val dummyActions = object : SettingsActions {
             override fun setAutoRecordIncoming(enabled: Boolean) {}
             override fun setAutoRecordOutgoing(enabled: Boolean) {}
+            override fun setVolumeKeyTriggerEnabled(enabled: Boolean) {}
             override fun setVibrationEnabled(enabled: Boolean) {}
             override fun setIgnoreAnonymousIncoming(enabled: Boolean) {}
             override fun setIgnoreCrossCountryIncoming(enabled: Boolean) {}

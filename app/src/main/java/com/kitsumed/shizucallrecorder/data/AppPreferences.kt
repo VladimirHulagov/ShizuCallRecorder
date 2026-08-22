@@ -50,6 +50,9 @@ class AppPreferences(context: Context) {
         const val AUTO_RECORD_INCOMING = false
         const val AUTO_RECORD_OUTGOING = false
 
+        // --- Manual Trigger ---
+        const val VOLUME_KEY_TRIGGER_ENABLED = false
+
         
         // --- Filters & Contacts ---
         const val IGNORE_ANONYMOUS_INCOMING = false
@@ -103,6 +106,7 @@ class AppPreferences(context: Context) {
         POST_RECORDING_FILE_ACTIONS_NOTIFICATION_ENABLED ("post_recording_file_actions_notification_enabled"),
         AUTO_RECORD_INCOMING("auto_record_incoming"),
         AUTO_RECORD_OUTGOING("auto_record_outgoing"),
+        VOLUME_KEY_TRIGGER_ENABLED("volume_key_trigger_enabled"),
         IGNORE_ANONYMOUS_INCOMING("ignore_anonymous_incoming"),
         IGNORE_CROSS_COUNTRY_INCOMING("ignore_cross_country_incoming"),
         IGNORE_CROSS_COUNTRY_OUTGOING("ignore_cross_country_outgoing"),
@@ -296,6 +300,14 @@ class AppPreferences(context: Context) {
     
     /** Sets whether auto-recording for outgoing calls is enabled. */
     fun setAutoRecordOutgoingEnabled(enabled: Boolean) = setBoolean(Key.AUTO_RECORD_OUTGOING, enabled)
+
+    // -------- Manual Trigger --------
+
+    /** Checks if the volume key long-press trigger for manual recording is enabled. */
+    fun isVolumeKeyTriggerEnabled() = getBoolean(Key.VOLUME_KEY_TRIGGER_ENABLED, DefaultsValue.VOLUME_KEY_TRIGGER_ENABLED)
+
+    /** Sets whether the volume key long-press trigger is enabled. */
+    fun setVolumeKeyTriggerEnabled(enabled: Boolean) = setBoolean(Key.VOLUME_KEY_TRIGGER_ENABLED, enabled)
 
     // -------- Filters & Contacts --------
 

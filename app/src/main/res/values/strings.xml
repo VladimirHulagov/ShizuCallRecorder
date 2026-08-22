@@ -198,6 +198,9 @@
     
     <string name="settings_auto_record_incoming">Automatically record incoming calls</string>
     <string name="settings_auto_record_outgoing">Automatically record outgoing calls</string>
+    <string name="settings_volume_key_trigger">Start/stop recording with volume keys</string>
+    <string name="settings_volume_key_trigger_desc">During a call, long-press a volume key to start or stop recording. Short presses still change the volume.</string>
+    <string name="recording_volume_trigger_failed">Volume key trigger failed</string>
     <string name="settings_ignore_anonymous_incoming">Ignore anonymous incoming calls</string>
     <string name="settings_ignore_cross_country_incoming">Ignore cross-country incoming calls</string>
     <string name="settings_ignore_cross_country_outgoing">Ignore cross-country outgoing calls</string>

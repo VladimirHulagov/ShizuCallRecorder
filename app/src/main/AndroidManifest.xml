@@ -41,6 +41,13 @@
     <!-- Required so Android OS accepts our InCallService, we will later get the permission with AppOps -->
     <uses-permission android:name="android.permission.MANAGE_ONGOING_CALLS" />
 
+    <!--
+         Optional trigger: start/stop recording via volume key long-press during a call.
+         Development-level permission: not granted on install; the app grants it to itself
+         once via "pm grant" through the privileged Shizuku shell process (survives reboots).
+    -->
+    <uses-permission android:name="android.permission.SET_VOLUME_KEY_LONG_PRESS_LISTENER" tools:ignore="ProtectedPermissions" />
+
     <application
         android:name=".ShizuApplication"
         android:allowBackup="true"

@@ -84,6 +84,10 @@ class ShellService : IShellService.Stub {
         return commandExecutor.grantRole(packageName, roleName, userProfileId)
     }
 
+    override fun grantRuntimePermission(packageName: String, permissionName: String, userProfileId: Int): Boolean {
+        return commandExecutor.grantRuntimePermission(packageName, permissionName, userProfileId)
+    }
+
 
     /**
      * Called by Shizuku when it wants to shut down this user service.

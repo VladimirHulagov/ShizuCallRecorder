@@ -66,6 +66,16 @@ interface IShellService {
     boolean grantRole(String packageName, String roleName, int userProfileId) = 6;
 
     /**
+     * Grants a runtime permission (development protection level) to a package via "pm grant".
+     * Works because the shell user is allowed to grant development permissions.
+     * @param packageName The package name of the app.
+     * @param permissionName The permission to grant (e.g. SET_VOLUME_KEY_LONG_PRESS_LISTENER).
+     * @param userProfileId The user profile ID (e.g. 0 for the primary user).
+     * @return True if the command was successful, false otherwise.
+    */
+    boolean grantRuntimePermission(String packageName, String permissionName, int userProfileId) = 7;
+
+    /**
      * Called by Shizuku when it wants to shut down this user service.
      * MUST call [kotlin.system.exitProcess] so the entire shell process is terminated.
      * This is the special transaction code used by Shizuku to "destroy" the process.
