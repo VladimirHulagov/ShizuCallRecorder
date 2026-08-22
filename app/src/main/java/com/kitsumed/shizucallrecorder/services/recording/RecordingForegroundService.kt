@@ -314,7 +314,8 @@ class RecordingForegroundService : Service() {
                 }
                 else -> {
                     AppLogger.i("VolumeKeyTrigger: starting recording")
-                    val startIntent = Intent(this).setAction(ACTION_MANUAL_START)
+                    val startIntent = Intent(this, RecordingForegroundService::class.java)
+                        .setAction(ACTION_MANUAL_START)
                     state.metadata?.let { startIntent.putExtra(EnrichedCallData.EXTRA_METADATA, it) }
                     onStartCommand(startIntent, 0, -1)
                 }
