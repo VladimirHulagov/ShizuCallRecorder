@@ -191,6 +191,11 @@ class RecordingForegroundService : Service() {
                         ShizukuConnectionManager.waitForServer()
                         val service = shizukuManager.getShellService()
                         shellService = service // update local ref
+                        // The shell service is up: also start the screen-off volume key
+                        // monitor (no-op if the trigger is disabled or already running).
+                        serviceScope.launch(Dispatchers.IO) {
+                            ensureVolumeKeyTriggerReady(service)
+                        }
                         startNewRecordingSession(service, currentMeta)
                     } catch (e: SecurityException) { // Shizuku permission not granted
                         AppLogger.e( "Shizuku permission was denied / not granted", e)
@@ -223,6 +228,23 @@ class RecordingForegroundService : Service() {
                     // increasing the chance it's ready by the time we need it. But this means Shizuku will be running without the user starting the recording yet.
                     if (!appPreferences.isShizukuStartOnRecordEnabled()) {
                         tryStartShizukuServer()
+                    }
+                    // Bind the shell service already in standby so the screen-off volume
+                    // key monitor is live BEFORE the user presses the key: the primary
+                    // use case is starting a recording with the phone at the ear.
+                    try {
+                        ShizukuConnectionManager.waitForServer(timeoutMillis = 5000)
+                        val service = shizukuManager.getShellService()
+                        shellService = service // update local ref
+                        serviceScope.launch(Dispatchers.IO) {
+                            ensureVolumeKeyTriggerReady(service)
+                        }
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        // Non-fatal in standby: if the user presses the volume key now,
+                        // nothing happens (screen-off trigger unavailable). Binding will
+                        // be retried when a recording starts.
+                        AppLogger.w("Standby: could not bind shell service for volume key monitor (${e.message})")
                     }
                     AppLogger.i( "Entered standby for ${currentMeta?.direction} call")
                 }
@@ -277,6 +299,7 @@ class RecordingForegroundService : Service() {
         // Always clean up, even if the OS kills the service mid-recording.
         // This is the guaranteed last callback before the service process is cleaned up.
         AppLogger.v( "RecordingForegroundService is destroying... Ensuring cleanup...")
+        volumeKeyTrigger?.stopShellMonitor()
         volumeKeyTrigger?.unregister()
         volumeKeyTrigger = null
         serviceScope.cancel()
@@ -290,6 +313,34 @@ class RecordingForegroundService : Service() {
     }
 
     // ── Service internal logic ───────────────────────────────────────
+
+    /**
+     * Ensures both volume key trigger paths are live once the shell service is bound:
+     * starts the screen-off /dev/input monitor and, if the app-side reflective
+     * listener could not register earlier (e.g. the pm grant silently failed because
+     * Shizuku was not running when the toggle was flipped), retries the grant now and
+     * registers the listener.
+     */
+    private fun ensureVolumeKeyTriggerReady(service: IShellService) {
+        val trigger = volumeKeyTrigger ?: return
+        trigger.startShellMonitor(service)
+        if (trigger.isRegistered) return
+        try {
+            if (!trigger.hasPermission()) {
+                val granted = service.grantRuntimePermission(
+                    packageName,
+                    VolumeKeyTriggerController.PERMISSION,
+                    android.os.Process.myUserHandle().hashCode()
+                )
+                AppLogger.i("VolumeKeyTrigger: in-call grant retry result: $granted")
+            }
+            if (trigger.register()) {
+                AppLogger.i("VolumeKeyTrigger: screen-on listener registered after in-call retry")
+            }
+        } catch (e: Exception) {
+            AppLogger.w("VolumeKeyTrigger: in-call listener retry failed (${e.message})")
+        }
+    }
 
     /**
      * Registers the volume key long-press listener if the user enabled the trigger in settings.
@@ -321,9 +372,11 @@ class RecordingForegroundService : Service() {
                 }
             }
         }
-        if (trigger.register()) {
-            volumeKeyTrigger = trigger
-        } else {
+        // Keep the controller even if the screen-on listener failed to register: the
+        // shell-side screen-off monitor needs no permission and is started later, when
+        // the service binds the shell process.
+        volumeKeyTrigger = trigger
+        if (!trigger.register()) {
             notificationHelper.showErrorNotification(
                 getString(R.string.recording_volume_trigger_failed)
             )

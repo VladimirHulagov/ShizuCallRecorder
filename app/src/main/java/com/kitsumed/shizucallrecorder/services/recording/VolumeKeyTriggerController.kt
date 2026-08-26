@@ -12,7 +12,10 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.view.KeyEvent
+import com.kitsumed.shizucallrecorder.IKeyEventCallback
+import com.kitsumed.shizucallrecorder.IShellService
 import com.kitsumed.shizucallrecorder.utils.AppLogger
 import java.lang.reflect.Proxy
 
@@ -61,6 +64,100 @@ class VolumeKeyTriggerController(
 
     /** Keeps a strong reference to the proxy so it is not garbage collected while registered. */
     private var listenerProxy: Any? = null
+
+    /** The privileged shell service used for the screen-off /dev/input monitor. */
+    private var shellService: IShellService? = null
+
+    /** True while the shell-side screen-off monitor is active. */
+    var isShellMonitorActive = false
+        private set
+
+    /**
+     * Binder callback receiving raw volume-key down/up transitions read from
+     * /dev/input by the shell process. The kernel delivers input events regardless of
+     * the display state, so this path works with the screen off (phone at the ear).
+     */
+    private val shellMonitorCallback = object : IKeyEventCallback.Stub() {
+        override fun onVolumeKeyEvent(keyCode: Int, action: Int, timestampMillis: Long) {
+            // While the screen is interactive AND the app-side reflective listener is
+            // registered, the framework routes volume keys through MediaSessionService
+            // and our listener handles them: ignore this stream to avoid double
+            // triggering. In every other case (screen off, or the listener could not
+            // register due to a missing grant) the kernel events are the only signal
+            // we get, so we measure the hold duration ourselves.
+            if (isScreenInteractive && isRegistered) return
+            if (action == 1) {
+                // Key down: start timing the hold.
+                lastDownTimeMs.set(timestampMillis)
+                lastDownKey.set(keyCode)
+            } else {
+                // Key up: hold finished — trigger if it was long enough.
+                val downAt = lastDownTimeMs.get()
+                val downKey = lastDownKey.get()
+                if (downAt > 0 && downKey == keyCode) {
+                    val holdMs = timestampMillis - downAt
+                    if (holdMs >= HOLD_THRESHOLD_MS) {
+                        AppLogger.i("VolumeKeyTrigger: screen-off long-press detected (key=$keyCode, hold=${holdMs}ms)")
+                        Handler(Looper.getMainLooper()).post { onTrigger() }
+                    } else {
+                        AppLogger.d("VolumeKeyTrigger: screen-off press too short (${holdMs}ms < $HOLD_THRESHOLD_MS)")
+                    }
+                }
+                lastDownTimeMs.set(0)
+            }
+        }
+    }
+
+    /** Re-usable atomic holders so binder threads can't race the trigger. */
+    private val lastDownTimeMs = java.util.concurrent.atomic.AtomicLong(0)
+    private val lastDownKey = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** Hold duration that counts as a long-press on the screen-off path. */
+    private val HOLD_THRESHOLD_MS = 600L
+
+    /** True when the display is on/un-interactive per PowerManager. */
+    private val isScreenInteractive: Boolean
+        get() = (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive == true
+
+    /**
+     * Starts the shell-side monitor for the screen-off path. Requires the already
+     * bound [shell][shizukuManager.getShellService]; a null or failed call leaves the
+     * controller unchanged (screen-on listener still works).
+     *
+     * @return True if the shell monitor started.
+     */
+    fun startShellMonitor(service: IShellService): Boolean {
+        return try {
+            val ok = service.startVolumeKeyMonitor(shellMonitorCallback)
+            isShellMonitorActive = ok
+            if (ok) {
+                shellService = service
+                AppLogger.i("VolumeKeyTrigger: shell screen-off monitor started")
+            } else {
+                AppLogger.w("VolumeKeyTrigger: shell monitor refused to start")
+            }
+            ok
+        } catch (e: Exception) {
+            AppLogger.w("VolumeKeyTrigger: failed to start shell monitor (${e.message})")
+            isShellMonitorActive = false
+            false
+        }
+    }
+
+    /** Stops the shell-side monitor and detaches from the shell service. */
+    fun stopShellMonitor() {
+        val service = shellService
+        shellService = null
+        isShellMonitorActive = false
+        lastDownTimeMs.set(0)
+        if (service != null) {
+            try {
+                service.stopVolumeKeyMonitor()
+            } catch (_: Exception) {
+                // Shell process is gone — nothing to stop.
+            }
+        }
+    }
 
     /**
      * Checks whether this package currently holds the volume key listener permission

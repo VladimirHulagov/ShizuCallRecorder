@@ -2,6 +2,7 @@ package com.kitsumed.shizucallrecorder;
 
 import android.os.ParcelFileDescriptor;
 import com.kitsumed.shizucallrecorder.ILogCallback;
+import com.kitsumed.shizucallrecorder.IKeyEventCallback;
 
 interface IShellService {
     /**
@@ -74,6 +75,19 @@ interface IShellService {
      * @return True if the command was successful, false otherwise.
     */
     boolean grantRuntimePermission(String packageName, String permissionName, int userProfileId) = 7;
+
+    /**
+     * Starts reading volume-key transitions from /dev/input inside the shell process
+     * (the shell user is in the input group). Kernel events are delivered regardless
+     * of the display state, complementing the app-side long-press listener which only
+     * fires while the screen is on. Events are streamed via the binder callback.
+     * @param callback One-way callback receiving raw volume-key down/up transitions.
+     * @return True if the monitor loop is running.
+     */
+    boolean startVolumeKeyMonitor(IKeyEventCallback callback) = 8;
+
+    /** Stops the /dev/input volume-key monitor started by [startVolumeKeyMonitor]. */
+    void stopVolumeKeyMonitor() = 9;
 
     /**
      * Called by Shizuku when it wants to shut down this user service.

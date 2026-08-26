@@ -88,6 +88,14 @@ class ShellService : IShellService.Stub {
         return commandExecutor.grantRuntimePermission(packageName, permissionName, userProfileId)
     }
 
+    override fun startVolumeKeyMonitor(callback: IKeyEventCallback): Boolean {
+        return VolumeKeyInputMonitor.start(callback)
+    }
+
+    override fun stopVolumeKeyMonitor() {
+        VolumeKeyInputMonitor.stop()
+    }
+
 
     /**
      * Called by Shizuku when it wants to shut down this user service.
