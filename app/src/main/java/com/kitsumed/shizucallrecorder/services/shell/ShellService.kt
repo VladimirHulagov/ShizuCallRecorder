@@ -12,6 +12,7 @@ import android.content.Context
 import android.os.ParcelFileDescriptor
 import android.util.Log
 import androidx.annotation.Keep
+import com.kitsumed.shizucallrecorder.IKeyEventCallback
 import com.kitsumed.shizucallrecorder.ILogCallback
 import com.kitsumed.shizucallrecorder.IShellService
 import com.kitsumed.shizucallrecorder.utils.AppLogger
