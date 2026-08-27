@@ -12,7 +12,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
-import android.os.PowerManager
 import android.view.KeyEvent
 import com.kitsumed.shizucallrecorder.IKeyEventCallback
 import com.kitsumed.shizucallrecorder.IShellService
@@ -36,8 +35,10 @@ import java.lang.reflect.Proxy
  *
  * While the listener is registered, volume key LONG presses are delivered to us
  * INSTEAD of changing the volume (short presses keep working normally). During a
- * phone call, volume key events are routed through MediaSessionService, so the
- * long-press is delivered reliably while the screen is on.
+ * phone call, volume key events are typically consumed by the in-call volume
+ * handler before they reach MediaSessionService, so during calls the kernel
+ * /dev/input path (see [shellMonitorCallback]) is the PRIMARY trigger and this
+ * reflective listener is a secondary path for when it does fire.
  *
  * The registration is automatically cleared by the system when our process dies
  * (the framework links our binder to death).
@@ -79,15 +80,19 @@ class VolumeKeyTriggerController(
      */
     private val shellMonitorCallback = object : IKeyEventCallback.Stub() {
         override fun onVolumeKeyEvent(keyCode: Int, action: Int, timestampMillis: Long) {
-            // While the screen is interactive AND the app-side reflective listener is
-            // registered, the framework routes volume keys through MediaSessionService
-            // and our listener handles them: ignore this stream to avoid double
-            // triggering. In every other case (screen off, or the listener could not
-            // register due to a missing grant) the kernel events are the only signal
-            // we get, so we measure the hold duration ourselves.
-            if (isScreenInteractive && isRegistered) return
+            // Kernel events are delivered regardless of the display state, so this path
+            // works both with the screen off (phone at the ear) and on. During an active
+            // call the framework routes volume keys to the in-call volume handler and the
+            // reflective MediaSession listener often never fires — so the kernel path is
+            // the PRIMARY trigger, not a fallback.
+            //
+            // De-duplication: if the reflective listener already handled a press (it
+            // delivers on long-press detection, i.e. mid-hold), the matching kernel
+            // key-up must not fire the toggle a second time. We track the kernel
+            // timestamp of the down event that the framework path already consumed.
             if (action == 1) {
                 // Key down: start timing the hold.
+                AppLogger.i("VolumeKeyTrigger: kernel key-down (key=$keyCode ts=$timestampMillis)")
                 lastDownTimeMs.set(timestampMillis)
                 lastDownKey.set(keyCode)
             } else {
@@ -97,11 +102,17 @@ class VolumeKeyTriggerController(
                 if (downAt > 0 && downKey == keyCode) {
                     val holdMs = timestampMillis - downAt
                     if (holdMs >= HOLD_THRESHOLD_MS) {
-                        AppLogger.i("VolumeKeyTrigger: screen-off long-press detected (key=$keyCode, hold=${holdMs}ms)")
-                        Handler(Looper.getMainLooper()).post { onTrigger() }
+                        if (downAt == lastFrameworkHandledDownMs.get()) {
+                            AppLogger.i("VolumeKeyTrigger: kernel long-press ignored (already handled by framework listener)")
+                        } else {
+                            AppLogger.i("VolumeKeyTrigger: screen-off long-press detected (key=$keyCode, hold=${holdMs}ms)")
+                            Handler(Looper.getMainLooper()).post { onTrigger() }
+                        }
                     } else {
                         AppLogger.d("VolumeKeyTrigger: screen-off press too short (${holdMs}ms < $HOLD_THRESHOLD_MS)")
                     }
+                } else {
+                    AppLogger.d("VolumeKeyTrigger: kernel key-up without matching down (key=$keyCode ts=$timestampMillis)")
                 }
                 lastDownTimeMs.set(0)
             }
@@ -112,12 +123,14 @@ class VolumeKeyTriggerController(
     private val lastDownTimeMs = java.util.concurrent.atomic.AtomicLong(0)
     private val lastDownKey = java.util.concurrent.atomic.AtomicInteger(0)
 
+    /**
+     * Kernel timestamp of the key-down whose long-press the reflective framework
+     * listener already fired on — used to suppress the duplicate kernel key-up trigger.
+     */
+    private val lastFrameworkHandledDownMs = java.util.concurrent.atomic.AtomicLong(-1)
+
     /** Hold duration that counts as a long-press on the screen-off path. */
     private val HOLD_THRESHOLD_MS = 600L
-
-    /** True when the display is on/un-interactive per PowerManager. */
-    private val isScreenInteractive: Boolean
-        get() = (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive == true
 
     /**
      * Starts the shell-side monitor for the screen-off path. Requires the already
@@ -150,6 +163,7 @@ class VolumeKeyTriggerController(
         shellService = null
         isShellMonitorActive = false
         lastDownTimeMs.set(0)
+        lastFrameworkHandledDownMs.set(-1)
         if (service != null) {
             try {
                 service.stopVolumeKeyMonitor()
@@ -205,6 +219,10 @@ class VolumeKeyTriggerController(
                         event.repeatCount == 0
                     ) {
                         AppLogger.i("VolumeKeyTrigger: long-press detected (keyCode=${event.keyCode})")
+                        // Snapshot the kernel timestamp of the in-flight hold (the kernel
+                        // key-down has already been delivered by now) so the subsequent
+                        // kernel key-up is recognised as a duplicate and does not re-trigger.
+                        lastFrameworkHandledDownMs.set(lastDownTimeMs.get())
                         Handler(Looper.getMainLooper()).post { onTrigger() }
                     }
                 }

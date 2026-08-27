@@ -104,14 +104,16 @@ object VolumeKeyInputMonitor {
                 try {
                     fds.add(Os.open(device.absolutePath, OsConstants.O_RDONLY, 0) to device.name)
                 } catch (e: Exception) {
-                    // Individual devices may refuse reads; skip them silently.
+                    // Individual devices may refuse reads; log which ones so a missing
+                    // volume-key device is visible in bug reports instead of silent.
+                    AppLogger.w("VolumeKeyInputMonitor: failed to open ${device.name} (${e.message})")
                 }
             }
             if (fds.isEmpty()) {
                 AppLogger.w("VolumeKeyInputMonitor: failed to open any input device")
                 return
             }
-            AppLogger.i("VolumeKeyInputMonitor: watching ${fds.size} input devices for volume keys")
+            AppLogger.i("VolumeKeyInputMonitor: watching ${fds.size} input devices for volume keys: ${fds.joinToString { it.second }}")
 
             val pollFds = Array(fds.size) { i ->
                 StructPollfd().apply {
@@ -163,6 +165,7 @@ object VolumeKeyInputMonitor {
                         (code == KEY_VOLUMEUP || code == KEY_VOLUMEDOWN) &&
                         (value == 0 || value == 1)
                     ) {
+                        AppLogger.d("VolumeKeyInputMonitor: ${fds[i].second}: key=$code action=$value ts=${kernelTimestampMs(buf)}")
                         try {
                             cb.onVolumeKeyEvent(code, value, kernelTimestampMs(buf))
                         } catch (e: Exception) {
